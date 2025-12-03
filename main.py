@@ -281,6 +281,59 @@ def save_cache(data: dict) -> None:
         f.write(datetime.now().isoformat())
 
 
+def save_historical_data(department_data: Dict, projection_df: pd.DataFrame) -> None:
+    """
+    Guarda datos históricos en un CSV para análisis posterior.
+    Usa el DataFrame de proyección ya calculado.
+    """
+    import csv
+    
+    HISTORICAL_FILE = "historical_data.csv"
+    timestamp = datetime.now().isoformat()
+    
+    # Calcular porcentaje promedio de actas
+    actas_percentages = [
+        dept_data.get('actas_percentage', 0) 
+        for dept_name, dept_data in department_data.items() 
+        if dept_name not in ('raw_data', 'Nacional')
+    ]
+    avg_actas = sum(actas_percentages) / len(actas_percentages) if actas_percentages else 0
+    
+    # Verificar si el archivo existe para escribir encabezados
+    file_exists = os.path.exists(HISTORICAL_FILE)
+    
+    # Usar los datos ya calculados del DataFrame (top 3)
+    top_candidates = projection_df.head(3).to_dict('records')
+    
+    with open(HISTORICAL_FILE, 'a', newline='', encoding='utf-8') as f:
+        writer = csv.writer(f)
+        
+        # Escribir encabezados si es archivo nuevo
+        if not file_exists:
+            headers = ['timestamp', 'avg_actas_pct']
+            for i in range(1, 4):
+                headers.extend([f'candidato_{i}', f'votos_actuales_{i}', f'votos_proyectados_{i}', f'porcentaje_{i}'])
+            writer.writerow(headers)
+        
+        # Construir fila de datos usando projection_df
+        row = [timestamp, round(avg_actas, 2)]
+        for candidate in top_candidates:
+            row.extend([
+                candidate.get('Candidate', ''),
+                candidate.get('Current Votes', 0),
+                candidate.get('Projected Votes', 0),
+                candidate.get('Percentage', 0)
+            ])
+        
+        # Rellenar si hay menos de 3 candidatos
+        while len(row) < 14:
+            row.extend(['', 0, 0, 0])
+        
+        writer.writerow(row)
+    
+    print(f"  📊 Datos históricos guardados en {HISTORICAL_FILE}")
+
+
 def load_cache() -> Optional[dict]:
     """Load results from cache file if exists."""
     if os.path.exists(CACHE_FILE):
@@ -1526,6 +1579,7 @@ def main():
                 'projection': projection_df.to_dict('records')
             }
             save_cache(cache_data)
+            save_historical_data(department_data, projection_df)
             last_results = cache_data
     else:
         # Show cached data if no new data
@@ -1563,6 +1617,7 @@ def main():
                         'projection': projection_df.to_dict('records')
                     }
                     save_cache(cache_data)
+                    save_historical_data(department_data, projection_df)
                     last_results = cache_data
                 else:
                     # Use cached data if available

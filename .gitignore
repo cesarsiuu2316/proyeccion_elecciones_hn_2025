@@ -18,6 +18,12 @@ last_results.json
 .trigger_scrape
 .scraper_running
 
+# Historical data and generated files
+historical_data.csv
+resumen_electoral_*.csv
+grafico_*.png
+dashboard_electoral.png
+
 # IDE
 .vscode/
 .idea/

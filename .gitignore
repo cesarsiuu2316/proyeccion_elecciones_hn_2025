@@ -1,0 +1,29 @@
+# Browser profile (auto-generated)
+browser_scraper_profile/
+edge_scraper_profile/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+ENV/
+env/
+
+# Cache files
+last_results.json
+.data_updated
+.trigger_scrape
+.scraper_running
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db

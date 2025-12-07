@@ -63,6 +63,113 @@ def calculate_projection(current_votes: float, actas_percentage: float) -> float
         return current_votes
     return (current_votes * 100) / actas_percentage
 
+def generate_projection_summary(data, calculation_mode):
+    """
+    Genera el resumen de proyección recalculando desde los datos crudos.
+    calculation_mode: 'DEPARTAMENTOS' o 'MUNICIPIOS'
+    """
+    if not data or 'departments' not in data:
+        return []
+        
+    global_totals = {} # {name: {'current': 0, 'projected': 0}}
+    
+    departments = data['departments']
+    
+    for dept_name, dept_data in departments.items():
+        if dept_name in ('raw_data', 'Nacional'):
+            continue
+            
+        if calculation_mode == 'DEPARTAMENTOS':
+            actas_pct = dept_data.get('actas_percentage', 0)
+            candidates = dept_data.get('candidates', [])
+            
+            for cand in candidates:
+                name = cand.get('name', 'Desconocido')
+                votes = cand.get('votes', 0)
+                
+                if name in ["Información General", "Información Acta"]:
+                    continue
+                
+                if name not in global_totals:
+                    global_totals[name] = {'current': 0, 'projected': 0.0}
+                
+                global_totals[name]['current'] += votes
+                
+                proj = calculate_projection(votes, actas_pct)
+                global_totals[name]['projected'] += proj
+                
+        elif calculation_mode == 'MUNICIPIOS':
+            municipios = dept_data.get('municipios', {})
+            # Si no hay municipios (ej. Voto Exterior a veces), usar datos del depto si existen
+            if not municipios and calculation_mode == 'MUNICIPIOS':
+                 pass 
+
+            for mun_name, mun_data in municipios.items():
+                actas_pct = mun_data.get('actas_percentage', 0)
+                candidates = mun_data.get('candidates', [])
+                
+                for cand in candidates:
+                    name = cand.get('name', 'Desconocido')
+                    votes = cand.get('votes', 0)
+                    
+                    if name in ["Información General", "Información Acta"]:
+                        continue
+                    
+                    if name not in global_totals:
+                        global_totals[name] = {'current': 0, 'projected': 0.0}
+                    
+                    global_totals[name]['current'] += votes
+                    
+                    proj = calculate_projection(votes, actas_pct)
+                    global_totals[name]['projected'] += proj
+
+    # Calculate stats
+    results = []
+    grand_total_projected = sum(t['projected'] for t in global_totals.values())
+    
+    for name, totals in global_totals.items():
+        proj = totals['projected']
+        pct = (proj / grand_total_projected * 100) if grand_total_projected > 0 else 0
+        results.append({
+            'Candidate': name,
+            'Current Votes': totals['current'],
+            'Projected Votes': proj,
+            'Percentage': pct
+        })
+        
+    # Sort by projected votes
+    results.sort(key=lambda x: x['Projected Votes'], reverse=True)
+    return results[:3]
+
+def display_summary_metrics(summary_data, key_prefix=""):
+    """Helper para mostrar las tarjetas de métricas."""
+    if not summary_data:
+        st.warning("No hay datos suficientes para generar la proyección.")
+        return
+
+    try:
+        summary_df = pd.DataFrame(summary_data)
+        num_cols = min(len(summary_df), 3)
+        if num_cols == 0:
+            return
+
+        cols = st.columns(num_cols)
+        colors = ['🥇', '🥈', '🥉']
+        
+        for i, (idx, row) in enumerate(summary_df.iterrows()):
+            if i >= 3: break
+            with cols[i]:
+                medal = colors[i] if i < 3 else '📊'
+                candidate_name = str(row['Candidate'])
+                st.metric(
+                    label=f"{medal} {candidate_name[:20]}",
+                    value=f"{row['Percentage']:.2f}%",
+                    delta=f"{row['Projected Votes']:,.0f} votos proyectados"
+                )
+                st.caption(f"Actual: {row['Current Votes']:,.0f}")
+    except Exception as e:
+        st.error(f"Error mostrando métricas: {str(e)}")
+
 def format_timestamp(timestamp_str):
     """Formatear timestamp para que sea más legible."""
     try:
@@ -107,10 +214,13 @@ def process_department_data(data):
         if dept_name in ('raw_data', 'Nacional'):
             continue
         candidates = dept_data.get('candidates', [])
+        # Filter out non-candidates
+        candidates = [c for c in candidates if c.get('name') not in ["Información General", "Información Acta"]]
+        
         total_votes = sum(c.get('votes', 0) for c in candidates)
         if candidates and total_votes > 0:
             sorted_cands = sorted(candidates, key=lambda x: x.get('votes', 0), reverse=True)
-            top_candidates = [c['name'] for c in sorted_cands[:3]]
+            top_candidates = [c.get('name', 'Desconocido') for c in sorted_cands[:3]]
             break
     
     if not top_candidates:
@@ -127,7 +237,7 @@ def process_department_data(data):
         dept_data = departments[dept_name]
         actas_pct = dept_data.get('actas_percentage', 0)
         candidates = dept_data.get('candidates', [])
-        cand_votes = {c['name']: c['votes'] for c in candidates}
+        cand_votes = {c.get('name', 'Desconocido'): c.get('votes', 0) for c in candidates}
         
         row = {'Departamento': dept_name, 'Actas %': actas_pct}
         
@@ -136,7 +246,7 @@ def process_department_data(data):
             
             if actas_pct > 0:
                 raw_proj = calculate_projection(votes, actas_pct)
-                projected = int(raw_proj)
+                projected = int(round(raw_proj))
                 totals[cand]['projected'] += raw_proj
             else:
                 projected = votes
@@ -155,7 +265,7 @@ def process_department_data(data):
     total_row = {'Departamento': 'TOTAL', 'Actas %': ''}
     for cand in top_candidates:
         total_row[f'{cand[:15]} (Actual)'] = totals[cand]['current']
-        total_row[f'{cand[:15]} (Proyectado)'] = int(totals[cand]['projected'])
+        total_row[f'{cand[:15]} (Proyectado)'] = int(round(totals[cand]['projected']))
     
     return dept_df, total_row
 
@@ -172,10 +282,13 @@ def process_municipality_data(data):
         if dept_name in ('raw_data', 'Nacional'):
             continue
         candidates = dept_data.get('candidates', [])
+        # Filter out non-candidates
+        candidates = [c for c in candidates if c.get('name') not in ["Información General", "Información Acta"]]
+        
         total_votes = sum(c.get('votes', 0) for c in candidates)
         if candidates and total_votes > 0:
             sorted_cands = sorted(candidates, key=lambda x: x.get('votes', 0), reverse=True)
-            top_candidates = [c['name'] for c in sorted_cands[:3]]
+            top_candidates = [c.get('name', 'Desconocido') for c in sorted_cands[:3]]
             break
     
     if not top_candidates:
@@ -197,7 +310,7 @@ def process_municipality_data(data):
         for mun_name, mun_data in municipios.items():
             actas_pct = mun_data.get('actas_percentage', 0)
             candidates = mun_data.get('candidates', [])
-            cand_votes = {c['name']: c['votes'] for c in candidates}
+            cand_votes = {c.get('name', 'Desconocido'): c.get('votes', 0) for c in candidates}
             
             row = {
                 'Departamento': dept_name,
@@ -210,7 +323,7 @@ def process_municipality_data(data):
                 
                 if actas_pct > 0:
                     raw_proj = calculate_projection(votes, actas_pct)
-                    projected = int(raw_proj)
+                    projected = int(round(raw_proj))
                     totals[cand]['projected'] += raw_proj
                 else:
                     projected = votes
@@ -220,8 +333,8 @@ def process_municipality_data(data):
                 row[f'{cand[:15]} (Proyectado)'] = projected
                 
                 totals[cand]['current'] += votes
-            
-            mun_rows.append(row)
+        
+        mun_rows.append(row)
             
     if not mun_rows:
         return None, None
@@ -232,7 +345,7 @@ def process_municipality_data(data):
     total_row = {'Departamento': 'TOTAL', 'Municipio': '', 'Actas %': ''}
     for cand in top_candidates:
         total_row[f'{cand[:15]} (Actual)'] = totals[cand]['current']
-        total_row[f'{cand[:15]} (Proyectado)'] = int(totals[cand]['projected'])
+        total_row[f'{cand[:15]} (Proyectado)'] = int(round(totals[cand]['projected']))
         
     return mun_df, total_row
 
@@ -296,31 +409,27 @@ def main():
     # Procesar datos
     mode = data.get('mode', 'DEPARTAMENTOS')
     
-    # Obtener resumen nacional (usando la proyección calculada por main.py)
-    summary_data = data.get('projection', [])
-    if not summary_data:
-        st.error("No se encontraron datos de proyección.")
-        return
-        
-    summary_df = pd.DataFrame(summary_data)
-    
     # Sección de resumen
-    st.header(f"📊 Resumen de Proyección Nacional ({mode})")
+    st.header(f"📊 Resumen de Proyección Nacional")
     
-    # Crear tarjetas de métricas para el top 3
-    cols = st.columns(min(len(summary_df), 3))
-    colors = ['🥇', '🥈', '🥉']
-    
-    for i, (idx, row) in enumerate(summary_df.iterrows()):
-        if i >= 3: break
-        with cols[i]:
-            medal = colors[i] if i < 3 else '📊'
-            st.metric(
-                label=f"{medal} {row['Candidate'][:20]}",
-                value=f"{row['Percentage']:.2f}%",
-                delta=f"{row['Projected Votes']:,.0f} votos proyectados"
-            )
-            st.caption(f"Actual: {row['Current Votes']:,.0f}")
+    if mode == 'BOTH':
+        st.info("Mostrando proyecciones comparativas (Departamental vs Municipal)")
+        tab1, tab2 = st.tabs(["🏛️ Proyección por Departamentos", "🏘️ Proyección por Municipios"])
+        
+        with tab1:
+            st.caption("Proyección calculada sumando las proyecciones individuales de cada DEPARTAMENTO.")
+            summary_dept = generate_projection_summary(data, 'DEPARTAMENTOS')
+            display_summary_metrics(summary_dept, key_prefix="dept")
+            
+        with tab2:
+            st.caption("Proyección calculada sumando las proyecciones individuales de cada MUNICIPIO (Más preciso).")
+            summary_mun = generate_projection_summary(data, 'MUNICIPIOS')
+            display_summary_metrics(summary_mun, key_prefix="mun")
+            
+    else:
+        # Modo simple (solo uno)
+        summary_data = generate_projection_summary(data, mode)
+        display_summary_metrics(summary_data, key_prefix="simple")
     
     st.divider()
     

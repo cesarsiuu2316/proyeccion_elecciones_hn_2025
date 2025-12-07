@@ -70,9 +70,11 @@ HONDURAS_DEPARTMENTS = [
 ]
 
 
+'''
 def clear_console():
     """Clear the console screen."""
     os.system('cls' if os.name == 'nt' else 'clear')
+'''
 
 
 def connect_to_existing_browser():
@@ -157,6 +159,7 @@ def launch_browser_with_debugging() -> bool:
         return False
 
 
+'''
 def try_direct_api() -> Optional[dict]:
     """
     Try to access the API directly using requests library.
@@ -192,8 +195,10 @@ def try_direct_api() -> Optional[dict]:
             continue
     
     return None
+'''
 
 
+'''
 def create_stealth_context(browser: Browser) -> BrowserContext:
     """
     Create a browser context with anti-detection measures.
@@ -269,6 +274,7 @@ def create_stealth_context(browser: Browser) -> BrowserContext:
     """)
     
     return context
+'''
 
 
 def save_cache(data: dict) -> None:
@@ -418,6 +424,7 @@ class ElectionScraper:
         self.use_api: bool = False
         self.cookies: Optional[List[dict]] = None
         
+    '''
     def create_browser(self, playwright, channel: str = None):
         """Create browser with anti-detection settings."""
         # Try different browser channels
@@ -538,6 +545,7 @@ class ElectionScraper:
             context.close()
             browser.close()
             return results
+    '''
     
     def scrape_with_existing_browser(self, mode: str = "DEPARTAMENTOS") -> Dict[str, dict]:
         """
@@ -842,6 +850,7 @@ class ElectionScraper:
             
         return municipios_results
             
+    '''
     def intercept_api_requests(self, page: Page) -> List[dict]:
         """
         Intercept network requests to find JSON API endpoints.
@@ -1040,6 +1049,7 @@ class ElectionScraper:
             print(f"Error getting departments: {e}")
             
         return departments
+    '''
     
     def extract_actas_percentage(self, page: Page) -> float:
         """
@@ -1200,7 +1210,7 @@ class ElectionScraper:
                 matches = re.findall(pattern, page_text)
                 for name, votes_str in matches:
                     votes = int(votes_str.replace(',', '').replace('.', '').replace(' ', ''))
-                    if votes > 100:
+                    if votes > 0:
                         candidates.append({'name': name.strip(), 'votes': votes})
                         
         except Exception as e:
@@ -1208,6 +1218,7 @@ class ElectionScraper:
             
         return candidates
     
+    '''
     def select_department(self, page: Page, department: str) -> bool:
         """Select a department from the dropdown."""
         try:
@@ -1520,6 +1531,7 @@ class ElectionScraper:
             print(f"Error parsing API response: {e}")
             
         return results
+    '''
 
 
 def display_department_results(department_data: Dict):
@@ -1758,7 +1770,7 @@ def calculate_national_projection(department_data: Dict, mode: str = "DEPARTAMEN
                     continue
                 
                 # Skip entries with very low votes (likely metadata)
-                if votes < 100:
+                if votes < 10:
                     continue
                 
                 # Calculate projection

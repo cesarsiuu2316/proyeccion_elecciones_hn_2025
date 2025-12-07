@@ -20,6 +20,7 @@ last_results.json
 
 # Historical data and generated files
 historical_data.csv
+historical_data_1.csv
 resumen_electoral_*.csv
 grafico_*.png
 dashboard_electoral.png

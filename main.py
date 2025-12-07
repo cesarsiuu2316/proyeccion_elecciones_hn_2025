@@ -63,10 +63,10 @@ BROWSER_PROFILE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "
 
 # Honduras departments (as they appear in the dropdown - uppercase, no accents)
 HONDURAS_DEPARTMENTS = [
-    "ATLANTIDA", "COLON", "COMAYAGUA", "COPAN", "CORTES",
-    "CHOLUTECA", "EL PARAISO", "FRANCISCO MORAZAN", "GRACIAS A DIOS",
-    "INTIBUCA", "ISLAS DE LA BAHIA", "LA PAZ", "LEMPIRA", "OCOTEPEQUE",
-    "OLANCHO", "SANTA BARBARA", "VALLE", "YORO", "VOTO EN EL EXTERIOR"
+    "ATLANTIDA", "CHOLUTECA", "COLON", "COMAYAGUA", "COPAN", "CORTES",
+    "EL PARAISO", "FRANCISCO MORAZAN", "GRACIAS A DIOS", "INTIBUCA", 
+    "ISLAS DE LA BAHIA", "LA PAZ", "LEMPIRA", "OCOTEPEQUE", "OLANCHO", 
+    "SANTA BARBARA", "VALLE", "YORO", "VOTO EN EL EXTERIOR"
 ]
 
 
@@ -310,7 +310,7 @@ def save_historical_data(department_data: Dict, projection_df: pd.DataFrame) -> 
         
         # Escribir encabezados si es archivo nuevo
         if not file_exists:
-            headers = ['timestamp', 'avg_actas_pct']
+            headers = ['timestamp', 'actas_correctas_pct']
             for i in range(1, 4):
                 headers.extend([f'candidato_{i}', f'votos_actuales_{i}', f'votos_proyectados_{i}', f'porcentaje_{i}'])
             writer.writerow(headers)
@@ -485,7 +485,7 @@ class ElectionScraper:
             browser.close()
             return results
     
-    def scrape_with_existing_browser(self) -> Dict[str, dict]:
+    def scrape_with_existing_browser(self, mode: str = "DEPARTAMENTOS") -> Dict[str, dict]:
         """
         Scrape all departments using an existing Chrome browser session.
         This bypasses bot protection by using your authenticated browser.
@@ -526,7 +526,7 @@ class ElectionScraper:
             print("\n  Looking for department selector...")
             
             # Try to find and iterate through departments
-            dept_results = self.scrape_all_departments(page)
+            dept_results = self.scrape_all_departments(page, mode=mode)
             if dept_results:
                 results.update(dept_results)
             
@@ -541,45 +541,12 @@ class ElectionScraper:
         
         return results
     
-    def scrape_all_departments(self, page: Page) -> Dict[str, dict]:
+    def scrape_all_departments(self, page: Page, mode: str = "DEPARTAMENTOS") -> Dict[str, dict]:
         """
         Iterate through all departments and extract their data.
         Uses the select.form-select dropdown and Consultar button.
         """
         results = {}
-        
-        print("    Searching for Departamento dropdown...")
-        
-        # Find the select element with class form-select that contains department options
-        dropdown = None
-        try:
-            # Look for select elements
-            selects = page.query_selector_all('select.form-select')
-            print(f"    Found {len(selects)} select.form-select elements")
-            
-            for i, sel in enumerate(selects):
-                # Check if this select has department options
-                options_text = sel.inner_text().upper()
-                if 'TODOS' in options_text and ('ATLANTIDA' in options_text or 'FRANCISCO MORAZAN' in options_text):
-                    dropdown = sel
-                    print(f"    ✅ Found department dropdown (select #{i})")
-                    break
-            
-            if not dropdown:
-                # Try any select that has TODOS option
-                selects = page.query_selector_all('select')
-                for sel in selects:
-                    options_text = sel.inner_text().upper()
-                    if 'TODOS' in options_text:
-                        dropdown = sel
-                        print(f"    ✅ Found dropdown with TODOS option")
-                        break
-        except Exception as e:
-            print(f"    Error finding dropdown: {e}")
-        
-        if not dropdown:
-            print("    ⚠️  Could not find department dropdown")
-            return results
         
         # Department codes mapping (from the HTML)
         dept_codes = {
@@ -606,7 +573,43 @@ class ElectionScraper:
         
         print(f"    Iterating through {len(HONDURAS_DEPARTMENTS)} departments...")
         
-        for dept_name in HONDURAS_DEPARTMENTS:
+        for i, dept_name in enumerate(HONDURAS_DEPARTMENTS):
+            # Refresh page before each department to ensure clean state
+            # This fixes issues where previous selections interfere with the next one
+            if i > 0 or mode in ["MUNICIPIOS", "BOTH"]:
+                print(f"    Refreshing page before {dept_name}...")
+                try:
+                    page.reload(wait_until='domcontentloaded')
+                    time.sleep(3)
+                except Exception as e:
+                    print(f"    Error reloading: {e}")
+
+            # Find the dropdown (must be done after every reload)
+            dropdown = None
+            try:
+                # Look for select elements
+                selects = page.query_selector_all('select.form-select')
+                for sel in selects:
+                    options_text = sel.inner_text().upper()
+                    if 'TODOS' in options_text and ('ATLANTIDA' in options_text or 'FRANCISCO MORAZAN' in options_text):
+                        dropdown = sel
+                        break
+                
+                if not dropdown:
+                    # Try any select that has TODOS option
+                    selects = page.query_selector_all('select')
+                    for sel in selects:
+                        options_text = sel.inner_text().upper()
+                        if 'TODOS' in options_text:
+                            dropdown = sel
+                            break
+            except Exception as e:
+                print(f"    Error finding dropdown: {e}")
+            
+            if not dropdown:
+                print(f"    ⚠️  Could not find department dropdown for {dept_name}")
+                continue
+
             # VOTO EN EL EXTERIOR: only 1 try, accept 0 votes
             max_retries = 1 if dept_name == "VOTO EN EL EXTERIOR" else 10
             
@@ -624,6 +627,11 @@ class ElectionScraper:
                         break
                     
                     # Select the department using value
+                    # Re-query dropdown to avoid stale element reference if retrying
+                    if attempt > 0:
+                        # (Simplified re-query logic if needed, but usually not needed inside retry loop unless page changed)
+                        pass
+
                     dropdown.select_option(value=dept_code)
                     time.sleep(0.5)
                     
@@ -684,6 +692,18 @@ class ElectionScraper:
                             'candidates': candidates
                         }
                         print(f"✅ {actas_pct}% actas, {total_votes:,} votes ({len(candidates)} candidates)")
+                        
+                        # --- MUNICIPIO LOGIC ---
+                        if mode in ["MUNICIPIOS", "BOTH"] and dept_name != "VOTO EN EL EXTERIOR":
+                            print(f"      Scraping Municipios for {dept_name}...")
+                            municipios_data = self.scrape_municipios(page, dept_name)
+                            if municipios_data:
+                                results[dept_name]['municipios'] = municipios_data
+                                print(f"      ✅ Scraped {len(municipios_data)} municipios")
+                            else:
+                                print("      ⚠️ No municipios found")
+                        # -----------------------
+                        
                         break  # Success, move to next department
                     else:
                         # Invalid data - retry
@@ -696,6 +716,77 @@ class ElectionScraper:
                     time.sleep(2)
         
         return results
+
+    def scrape_municipios(self, page: Page, dept_name: str) -> Dict[str, dict]:
+        """Scrape all municipios for a given department."""
+        municipios_results = {}
+        
+        try:
+            # Find Municipio dropdown
+            # It should be a select that is NOT the department one (which has 'ATLANTIDA' etc)
+            # Or we can look for the one that has 'TODOS' but NOT 'ATLANTIDA' (unless Atlantida is a municipio? No)
+            
+            mun_dropdown = None
+            selects = page.query_selector_all('select.form-select')
+            
+            for sel in selects:
+                # Check if this is the municipio dropdown
+                # It should have options, but NOT the department names
+                options_text = sel.inner_text().upper()
+                if 'TODOS' in options_text and 'ATLANTIDA' not in options_text:
+                    mun_dropdown = sel
+                    break
+            
+            if not mun_dropdown:
+                # Fallback: try finding the second select
+                if len(selects) >= 2:
+                    mun_dropdown = selects[1]
+            
+            if not mun_dropdown:
+                return {}
+            
+            # Get all options
+            options = mun_dropdown.query_selector_all('option')
+            municipios = []
+            for opt in options:
+                val = opt.get_attribute('value')
+                text = opt.inner_text().strip()
+                if val and text and text.upper() not in ['TODOS', 'SELECCIONE', '']:
+                    municipios.append({'value': val, 'name': text})
+            
+            print(f"      Found {len(municipios)} municipios")
+            
+            for mun in municipios:
+                mun_name = mun['name']
+                mun_val = mun['value']
+                
+                print(f"        > {mun_name}...", end=' ', flush=True)
+                
+                # Select Municipio
+                mun_dropdown.select_option(value=mun_val)
+                time.sleep(0.5)
+                
+                # Click Consultar
+                page.locator('button', has_text='Consultar').first.click()
+                time.sleep(5) # Wait for load
+                
+                # Extract
+                actas_pct = self.extract_actas_percentage(page)
+                candidates = self.extract_candidates(page)
+                
+                if candidates:
+                    municipios_results[mun_name] = {
+                        'actas_percentage': actas_pct,
+                        'candidates': candidates
+                    }
+                    print(f"✅ {actas_pct}%")
+                else:
+                    print("⚠️ No data")
+                    
+        except Exception as e:
+            print(f"      Error scraping municipios: {e}")
+            
+        return municipios_results
             
     def intercept_api_requests(self, page: Page) -> List[dict]:
         """
@@ -897,18 +988,52 @@ class ElectionScraper:
         return departments
     
     def extract_actas_percentage(self, page: Page) -> float:
-        """Extract the percentage of processed actas."""
+        """
+        Calculate the percentage of correct actas.
+        Formula: (Actas Correctas / Total Actas) * 100
+        """
         try:
-            # Get all text from the page
             page_text = page.inner_text('body')
             
-            # Look for patterns like "50% Actas" or "Actas: 50%" or just percentages near actas
+            # 1. Find Total Actas from pattern "16,858 de 19,152"
+            # We want the second number (19,152)
+            total_actas = 0
+            total_match = re.search(r'(\d+(?:,\d+)*)\s+de\s+(\d+(?:,\d+)*)', page_text)
+            if total_match:
+                total_str = total_match.group(2).replace(',', '')
+                total_actas = float(total_str)
+                # print(f"    Found Total Actas: {total_actas}")
+            
+            # 2. Find Correct Actas
+            # Look for "Correctas" or "Válidas" followed by a number, or a number followed by "Correctas"
+            correctas_actas = 0
+            
+            # Regex for "Correctas" followed by number (within reasonable distance)
+            # Matches: "Correctas: 14,451" or "Correctas 14,451"
+            correctas_match = re.search(r'[Cc]orrectas\D{0,30}(\d+(?:,\d+)*)', page_text)
+            if correctas_match:
+                val_str = correctas_match.group(1).replace(',', '')
+                correctas_actas = float(val_str)
+                # print(f"    Found Actas Correctas: {correctas_actas}")
+            else:
+                # Try number followed by "Correctas"
+                # Matches: "14,451 Correctas"
+                correctas_match_rev = re.search(r'(\d+(?:,\d+)*)\s*[Cc]orrectas', page_text)
+                if correctas_match_rev:
+                    val_str = correctas_match_rev.group(1).replace(',', '')
+                    correctas_actas = float(val_str)
+            
+            # If we found both, calculate percentage
+            if total_actas > 0 and correctas_actas > 0:
+                pct = (correctas_actas / total_actas) * 100
+                print(f"    Calculated Actas Correctas: {pct:.2f}% ({correctas_actas:,.0f}/{total_actas:,.0f})")
+                return pct
+            
+            # Fallback: Try to find just the percentage if calculation fails
             patterns = [
                 r'(\d+(?:[.,]\d+)?)\s*%\s*(?:de\s+)?[Aa]ctas',
                 r'[Aa]ctas[:\s]+(\d+(?:[.,]\d+)?)\s*%',
                 r'[Pp]rocesad[ao]s?[:\s]+(\d+(?:[.,]\d+)?)\s*%',
-                r'[Aa]ctas\s+[Pp]rocesad[ao]s?[:\s]+(\d+(?:[.,]\d+)?)\s*%',
-                r'(\d+(?:[.,]\d+)?)\s*%\s*[Pp]rocesad[ao]',
                 r'[Aa]vance[:\s]+(\d+(?:[.,]\d+)?)\s*%',
             ]
             
@@ -1402,10 +1527,12 @@ def display_department_results(department_data: Dict):
             
             # Calculate projection for this department
             if actas_pct > 0:
-                projected = int(calculate_projection(votes, actas_pct))
+                raw_proj = calculate_projection(votes, actas_pct)
+                projected = int(raw_proj)
             else:
+                raw_proj = float(votes)
                 projected = votes
-            total_projected_by_candidate[cand_name] += projected
+            total_projected_by_candidate[cand_name] += raw_proj
             
             print(f"  {votes:>9,} {projected:>9,}", end="")
         print()
@@ -1433,48 +1560,167 @@ def display_department_results(department_data: Dict):
     print("=" * 100)
 
 
-def calculate_national_projection(department_data: Dict) -> pd.DataFrame:
+def display_municipio_results(department_data: Dict):
+    """Display detailed results per municipio with current and projected votes."""
+    current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    
+    print("\n" + "=" * 100)
+    print(f"RESULTS BY MUNICIPIO                                           Data collected: {current_time}")
+    print("=" * 100)
+    
+    # Get top 3 candidate names from the first actual department with data
+    top_candidates = []
+    for dept_name, dept_data in department_data.items():
+        if dept_name in ('raw_data', 'Nacional'):
+            continue
+        candidates = dept_data.get('candidates', [])
+        if candidates:
+            sorted_cands = sorted(candidates, key=lambda x: x.get('votes', 0), reverse=True)
+            top_candidates = [c['name'] for c in sorted_cands[:3]]
+            break
+    
+    if not top_candidates:
+        print("No candidate data found.")
+        return
+    
+    # Print header
+    print(f"\n{'Municipio':<22} {'Actas%':>6}", end="")
+    for cand in top_candidates:
+        short_name = cand[:10] if len(cand) > 10 else cand
+        print(f"  {short_name:^19}", end="")
+    print()
+    
+    # Sub-header
+    print(f"{'':<22} {'':>6}", end="")
+    for _ in top_candidates:
+        print(f"  {'Current':>9} {'Proj':>9}", end="")
+    print()
+    print("-" * 100)
+    
+    sorted_depts = sorted([d for d in department_data.keys() if d not in ('raw_data', 'Nacional')])
+    
+    total_votes_by_candidate = {c: 0 for c in top_candidates}
+    total_projected_by_candidate = {c: 0 for c in top_candidates}
+    
+    for dept_name in sorted_depts:
+        dept_data = department_data[dept_name]
+        municipios = dept_data.get('municipios', {})
+        
+        if not municipios:
+            continue
+            
+        print(f"[{dept_name}]")
+        
+        for mun_name, mun_data in municipios.items():
+            actas_pct = mun_data.get('actas_percentage', 0)
+            candidates = mun_data.get('candidates', [])
+            cand_votes = {c['name']: c['votes'] for c in candidates}
+            
+            print(f"  {mun_name:<20} {actas_pct:>5.1f}%", end="")
+            
+            for cand_name in top_candidates:
+                votes = cand_votes.get(cand_name, 0)
+                total_votes_by_candidate[cand_name] += votes
+                
+                if actas_pct > 0:
+                    raw_proj = calculate_projection(votes, actas_pct)
+                    projected = int(raw_proj)
+                else:
+                    raw_proj = float(votes)
+                    projected = votes
+                total_projected_by_candidate[cand_name] += raw_proj
+                
+                print(f"  {votes:>9,} {projected:>9,}", end="")
+            print()
+        print("-" * 100)
+
+    # Print totals
+    print(f"{'TOTAL (MUNICIPIOS)':<22} {'':>6}", end="")
+    for cand_name in top_candidates:
+        current = total_votes_by_candidate[cand_name]
+        projected = int(total_projected_by_candidate[cand_name])
+        print(f"  {current:>9,} {projected:>9,}", end="")
+    print()
+    
+    # Calculate and show percentages
+    total_current = sum(total_votes_by_candidate.values())
+    total_projected = sum(total_projected_by_candidate.values())
+    if total_projected > 0:
+        print(f"{'PERCENTAGE':<22} {'':>6}", end="")
+        for cand_name in top_candidates:
+            curr_pct = (total_votes_by_candidate[cand_name] / total_current * 100) if total_current > 0 else 0
+            proj_pct = (total_projected_by_candidate[cand_name] / total_projected) * 100
+            print(f"  {curr_pct:>8.2f}% {proj_pct:>8.2f}%", end="")
+        print()
+    
+    print("=" * 100)
+
+
+def calculate_national_projection(department_data: Dict, mode: str = "DEPARTAMENTOS") -> pd.DataFrame:
     """
-    Calculate national projection by summing projected votes from all departments.
-    Excludes 'Nacional' to avoid double-counting - only uses actual department data.
+    Calculate national projection by summing projected votes.
+    If mode is MUNICIPIOS or BOTH, tries to use municipio-level data if available.
+    Otherwise uses department-level data.
     """
     candidate_projections = {}
     
     # Keywords that indicate non-candidate entries
     exclude_keywords = ['información', 'general', 'acta', 'total', 'votos', 'nulos', 'blancos', 'abstención']
     
+    print(f"\nCalculating projection using mode: {mode}")
+    
     for dept_name, dept_data in department_data.items():
         # Skip Nacional (general count) and raw_data - only use actual departments
         if dept_name in ('raw_data', 'Nacional'):
             continue
             
-        actas_pct = dept_data.get('actas_percentage', 0)
-        candidates = dept_data.get('candidates', [])
+        # Determine if we should use municipio data
+        use_municipios = False
+        if mode in ["MUNICIPIOS", "BOTH"] and 'municipios' in dept_data and dept_data['municipios']:
+            use_municipios = True
+            # print(f"  Using municipio data for {dept_name}")
         
-        for candidate in candidates:
-            name = candidate['name']
-            votes = candidate['votes']
+        items_to_process = []
+        
+        if use_municipios:
+            # Add all municipios
+            for mun_name, mun_data in dept_data['municipios'].items():
+                items_to_process.append(mun_data)
+        else:
+            # Use department data directly
+            items_to_process.append(dept_data)
             
-            # Skip non-candidate entries
-            name_lower = name.lower()
-            if any(kw in name_lower for kw in exclude_keywords):
-                continue
+        for item_data in items_to_process:
+            actas_pct = item_data.get('actas_percentage', 0)
+            candidates = item_data.get('candidates', [])
             
-            # Skip entries with very low votes (likely metadata)
-            if votes < 100:
-                continue
-            
-            # Calculate projection
-            projected = calculate_projection(votes, actas_pct) if actas_pct > 0 else votes
-            
-            if name not in candidate_projections:
-                candidate_projections[name] = {
-                    'current_votes': 0,
-                    'projected_votes': 0
-                }
-            
-            candidate_projections[name]['current_votes'] += votes
-            candidate_projections[name]['projected_votes'] += projected
+            for candidate in candidates:
+                name = candidate['name']
+                votes = candidate['votes']
+                
+                # Skip non-candidate entries
+                name_lower = name.lower()
+                if any(kw in name_lower for kw in exclude_keywords):
+                    continue
+                
+                # Skip entries with very low votes (likely metadata)
+                if votes < 100:
+                    continue
+                
+                # Calculate projection
+                if actas_pct > 0:
+                    projected = calculate_projection(votes, actas_pct)
+                else:
+                    projected = float(votes)
+                
+                if name not in candidate_projections:
+                    candidate_projections[name] = {
+                        'current_votes': 0,
+                        'projected_votes': 0
+                    }
+                
+                candidate_projections[name]['current_votes'] += votes
+                candidate_projections[name]['projected_votes'] += projected
     
     # Convert to DataFrame
     if candidate_projections:
@@ -1503,9 +1749,9 @@ def calculate_national_projection(department_data: Dict) -> pd.DataFrame:
     return pd.DataFrame()
 
 
-def display_results(df: pd.DataFrame, status: str = "ONLINE", cached_time: str = None):
+def display_results(df: pd.DataFrame, status: str = "ONLINE", cached_time: str = None, title: str = "NATIONAL PROJECTION"):
     """Display the projection results."""
-    clear_console()
+    # clear_console()
     
     current_time = datetime.now().strftime("%H:%M:%S")
     
@@ -1518,7 +1764,7 @@ def display_results(df: pd.DataFrame, status: str = "ONLINE", cached_time: str =
     else:
         print(f"\n✅ Source Status: ONLINE\n")
     
-    print("NATIONAL PROJECTION (Sum of Department Projections):")
+    print(f"{title}:")
     print("-" * 60)
     
     if df.empty:
@@ -1544,6 +1790,17 @@ def main():
     scraper = ElectionScraper()
     department_data = None
     
+    # Select Mode
+    print("\nSelect Projection Mode:")
+    print("1. Departamentos (Standard - Faster)")
+    print("2. Municipios (Detailed - Slower)")
+    print("3. Both (Comprehensive - Slowest)")
+    mode_selection = input("Choice (1/2/3) [Default: 1]: ").strip()
+    
+    mode_map = {"1": "DEPARTAMENTOS", "2": "MUNICIPIOS", "3": "BOTH"}
+    scrape_mode = mode_map.get(mode_selection, "DEPARTAMENTOS")
+    print(f"Selected Mode: {scrape_mode}\n")
+    
     # Launch browser automatically
     if launch_browser_with_debugging():
         print(f"✅ {BROWSER_NAME} launched successfully!")
@@ -1551,7 +1808,7 @@ def main():
         print("\nWait for the election results to load completely.")
         input("\n>>> Press ENTER when ready to scrape... ")
         
-        department_data = scraper.scrape_with_existing_browser()
+        department_data = scraper.scrape_with_existing_browser(mode=scrape_mode)
         
         if department_data:
             print(f"\n✅ Successfully scraped {len(department_data)} data sources!")
@@ -1569,14 +1826,35 @@ def main():
     
     # If we got data in phase 1, process it
     if department_data and 'raw_data' not in department_data:
-        # Show detailed per-department results (includes totals and projections)
-        display_department_results(department_data)
+        # Show detailed results based on mode
+        if scrape_mode in ["DEPARTAMENTOS", "BOTH"]:
+            display_department_results(department_data)
         
-        projection_df = calculate_national_projection(department_data)
+        if scrape_mode in ["MUNICIPIOS", "BOTH"]:
+            display_municipio_results(department_data)
+        
+        # Calculate and display projections
+        if scrape_mode == "BOTH":
+            proj_dept = calculate_national_projection(department_data, mode="DEPARTAMENTOS")
+            proj_mun = calculate_national_projection(department_data, mode="MUNICIPIOS")
+            
+            display_results(proj_dept, title="PROJECTION BASED ON DEPARTMENTS")
+            print("\n")
+            display_results(proj_mun, title="PROJECTION BASED ON MUNICIPIOS")
+            
+            # Save the MUNICIPIOS one as the main one for history if available, or maybe save both?
+            # For now, let's save the MUNICIPIOS one as it's more granular
+            projection_df = proj_mun
+            
+        else:
+            projection_df = calculate_national_projection(department_data, mode=scrape_mode)
+            display_results(projection_df, title=f"PROJECTION BASED ON {scrape_mode}")
+
         if not projection_df.empty:
             cache_data = {
                 'departments': department_data,
-                'projection': projection_df.to_dict('records')
+                'projection': projection_df.to_dict('records'),
+                'mode': scrape_mode
             }
             save_cache(cache_data)
             save_historical_data(department_data, projection_df)
@@ -1602,19 +1880,35 @@ def main():
             print("\nFetching updated data...")
             
             # Always use existing browser (Edge/Chrome)
-            department_data = scraper.scrape_with_existing_browser()
+            department_data = scraper.scrape_with_existing_browser(mode=scrape_mode)
             
             if department_data and 'raw_data' not in department_data:
-                # Show detailed per-department results (includes totals and projections)
-                display_department_results(department_data)
+                # Show detailed results based on mode
+                if scrape_mode in ["DEPARTAMENTOS", "BOTH"]:
+                    display_department_results(department_data)
                 
-                # Calculate projections and save to cache
-                projection_df = calculate_national_projection(department_data)
+                if scrape_mode in ["MUNICIPIOS", "BOTH"]:
+                    display_municipio_results(department_data)
+                
+                # Calculate and display projections
+                if scrape_mode == "BOTH":
+                    proj_dept = calculate_national_projection(department_data, mode="DEPARTAMENTOS")
+                    proj_mun = calculate_national_projection(department_data, mode="MUNICIPIOS")
+                    
+                    display_results(proj_dept, title="PROJECTION BASED ON DEPARTMENTS")
+                    print("\n")
+                    display_results(proj_mun, title="PROJECTION BASED ON MUNICIPIOS")
+                    
+                    projection_df = proj_mun
+                else:
+                    projection_df = calculate_national_projection(department_data, mode=scrape_mode)
+                    display_results(projection_df, title=f"PROJECTION BASED ON {scrape_mode}")
                 
                 if not projection_df.empty:
                     cache_data = {
                         'departments': department_data,
-                        'projection': projection_df.to_dict('records')
+                        'projection': projection_df.to_dict('records'),
+                        'mode': scrape_mode
                     }
                     save_cache(cache_data)
                     save_historical_data(department_data, projection_df)

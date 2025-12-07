@@ -97,7 +97,7 @@ def check_data_quality(data):
 def process_department_data(data):
     """Procesar datos de departamentos en DataFrames para mostrar."""
     if not data or 'departments' not in data:
-        return None, None, None
+        return None, None
     
     departments = data['departments']
     
@@ -114,11 +114,11 @@ def process_department_data(data):
             break
     
     if not top_candidates:
-        return None, None, None
+        return None, None
     
     # Construir tabla de departamentos
     dept_rows = []
-    totals = {c: {'current': 0, 'projected': 0} for c in top_candidates}
+    totals = {c: {'current': 0, 'projected': 0.0} for c in top_candidates}
     
     for dept_name in sorted(departments.keys()):
         if dept_name in ('raw_data', 'Nacional'):
@@ -133,13 +133,19 @@ def process_department_data(data):
         
         for cand in top_candidates:
             votes = cand_votes.get(cand, 0)
-            projected = int(calculate_projection(votes, actas_pct)) if actas_pct > 0 else votes
+            
+            if actas_pct > 0:
+                raw_proj = calculate_projection(votes, actas_pct)
+                projected = int(raw_proj)
+                totals[cand]['projected'] += raw_proj
+            else:
+                projected = votes
+                totals[cand]['projected'] += float(votes)
             
             row[f'{cand[:15]} (Actual)'] = votes
             row[f'{cand[:15]} (Proyectado)'] = projected
             
             totals[cand]['current'] += votes
-            totals[cand]['projected'] += projected
         
         dept_rows.append(row)
     
@@ -149,29 +155,86 @@ def process_department_data(data):
     total_row = {'Departamento': 'TOTAL', 'Actas %': ''}
     for cand in top_candidates:
         total_row[f'{cand[:15]} (Actual)'] = totals[cand]['current']
-        total_row[f'{cand[:15]} (Proyectado)'] = totals[cand]['projected']
+        total_row[f'{cand[:15]} (Proyectado)'] = int(totals[cand]['projected'])
     
-    # Construir DataFrame de resumen
-    total_projected = sum(t['projected'] for t in totals.values())
-    total_current = sum(t['current'] for t in totals.values())
+    return dept_df, total_row
+
+def process_municipality_data(data):
+    """Procesar datos de municipios en DataFrames para mostrar."""
+    if not data or 'departments' not in data:
+        return None, None
     
-    summary_rows = []
+    departments = data['departments']
+    
+    # Obtener nombres de candidatos
+    top_candidates = []
+    for dept_name, dept_data in departments.items():
+        if dept_name in ('raw_data', 'Nacional'):
+            continue
+        candidates = dept_data.get('candidates', [])
+        total_votes = sum(c.get('votes', 0) for c in candidates)
+        if candidates and total_votes > 0:
+            sorted_cands = sorted(candidates, key=lambda x: x.get('votes', 0), reverse=True)
+            top_candidates = [c['name'] for c in sorted_cands[:3]]
+            break
+    
+    if not top_candidates:
+        return None, None
+        
+    mun_rows = []
+    totals = {c: {'current': 0, 'projected': 0.0} for c in top_candidates}
+    
+    for dept_name in sorted(departments.keys()):
+        if dept_name in ('raw_data', 'Nacional'):
+            continue
+            
+        dept_data = departments[dept_name]
+        municipios = dept_data.get('municipios', {})
+        
+        if not municipios:
+            continue
+            
+        for mun_name, mun_data in municipios.items():
+            actas_pct = mun_data.get('actas_percentage', 0)
+            candidates = mun_data.get('candidates', [])
+            cand_votes = {c['name']: c['votes'] for c in candidates}
+            
+            row = {
+                'Departamento': dept_name,
+                'Municipio': mun_name,
+                'Actas %': actas_pct
+            }
+            
+            for cand in top_candidates:
+                votes = cand_votes.get(cand, 0)
+                
+                if actas_pct > 0:
+                    raw_proj = calculate_projection(votes, actas_pct)
+                    projected = int(raw_proj)
+                    totals[cand]['projected'] += raw_proj
+                else:
+                    projected = votes
+                    totals[cand]['projected'] += float(votes)
+                
+                row[f'{cand[:15]} (Actual)'] = votes
+                row[f'{cand[:15]} (Proyectado)'] = projected
+                
+                totals[cand]['current'] += votes
+            
+            mun_rows.append(row)
+            
+    if not mun_rows:
+        return None, None
+
+    mun_df = pd.DataFrame(mun_rows)
+    
+    # Construir fila de totales
+    total_row = {'Departamento': 'TOTAL', 'Municipio': '', 'Actas %': ''}
     for cand in top_candidates:
-        curr_pct = (totals[cand]['current'] / total_current * 100) if total_current > 0 else 0
-        proj_pct = (totals[cand]['projected'] / total_projected * 100) if total_projected > 0 else 0
-        summary_rows.append({
-            'Candidato': cand,
-            'Votos Actuales': totals[cand]['current'],
-            '% Actual': curr_pct,
-            'Votos Proyectados': totals[cand]['projected'],
-            '% Proyectado': proj_pct
-        })
-    
-    summary_df = pd.DataFrame(summary_rows)
-    summary_df = summary_df.sort_values('Votos Proyectados', ascending=False).reset_index(drop=True)
-    summary_df.index = summary_df.index + 1
-    
-    return dept_df, total_row, summary_df
+        total_row[f'{cand[:15]} (Actual)'] = totals[cand]['current']
+        total_row[f'{cand[:15]} (Proyectado)'] = int(totals[cand]['projected'])
+        
+    return mun_df, total_row
 
 def format_number(x):
     """Formatear números con comas."""
@@ -231,60 +294,102 @@ def main():
     st.divider()
     
     # Procesar datos
-    dept_df, total_row, summary_df = process_department_data(data)
+    mode = data.get('mode', 'DEPARTAMENTOS')
     
-    if summary_df is None:
-        st.error("No se pudieron procesar los datos electorales.")
+    # Obtener resumen nacional (usando la proyección calculada por main.py)
+    summary_data = data.get('projection', [])
+    if not summary_data:
+        st.error("No se encontraron datos de proyección.")
         return
+        
+    summary_df = pd.DataFrame(summary_data)
     
     # Sección de resumen
-    st.header("📊 Resumen de Proyección Nacional")
+    st.header(f"📊 Resumen de Proyección Nacional ({mode})")
     
     # Crear tarjetas de métricas para el top 3
-    cols = st.columns(len(summary_df))
+    cols = st.columns(min(len(summary_df), 3))
     colors = ['🥇', '🥈', '🥉']
     
     for i, (idx, row) in enumerate(summary_df.iterrows()):
+        if i >= 3: break
         with cols[i]:
             medal = colors[i] if i < 3 else '📊'
             st.metric(
-                label=f"{medal} {row['Candidato'][:20]}",
-                value=f"{row['% Proyectado']:.2f}%",
-                delta=f"{row['Votos Proyectados']:,.0f} votos proyectados"
+                label=f"{medal} {row['Candidate'][:20]}",
+                value=f"{row['Percentage']:.2f}%",
+                delta=f"{row['Projected Votes']:,.0f} votos proyectados"
             )
-            st.caption(f"Actual: {row['Votos Actuales']:,.0f} ({row['% Actual']:.2f}%)")
+            st.caption(f"Actual: {row['Current Votes']:,.0f}")
     
     st.divider()
     
-    # Desglose por departamento
-    st.header("🗺️ Resultados por Departamento")
+    # Mostrar tablas según el modo
+    show_dept = mode in ["DEPARTAMENTOS", "BOTH"]
+    show_mun = mode in ["MUNICIPIOS", "BOTH"]
     
-    if dept_df is not None and not dept_df.empty:
-        # Formatear el dataframe para mostrar
-        display_df = dept_df.copy()
+    if show_dept:
+        st.header("🗺️ Resultados por Departamento")
+        dept_df, dept_total = process_department_data(data)
         
-        # Formatear columna de Actas %
-        display_df['Actas %'] = display_df['Actas %'].apply(lambda x: f"{x:.1f}%" if isinstance(x, (int, float)) else x)
+        if dept_df is not None and not dept_df.empty:
+            # Formatear el dataframe para mostrar
+            display_df = dept_df.copy()
+            
+            # Formatear columna de Actas %
+            display_df['Actas %'] = display_df['Actas %'].apply(lambda x: f"{x:.1f}%" if isinstance(x, (int, float)) else x)
+            
+            # Formatear columnas de votos
+            for col in display_df.columns:
+                if 'Actual' in col or 'Proyectado' in col:
+                    display_df[col] = display_df[col].apply(format_number)
+            
+            st.dataframe(
+                display_df,
+                hide_index=True,
+                height=600
+            )
+            
+            # Mostrar totales
+            st.subheader("📊 Totales (Departamentos)")
+            total_df = pd.DataFrame([dept_total])
+            for col in total_df.columns:
+                if 'Actual' in col or 'Proyectado' in col:
+                    total_df[col] = total_df[col].apply(format_number)
+            
+            st.dataframe(total_df, hide_index=True)
+            
+    if show_mun:
+        if show_dept: st.divider()
+        st.header("🏙️ Resultados por Municipio")
+        mun_df, mun_total = process_municipality_data(data)
         
-        # Formatear columnas de votos
-        for col in display_df.columns:
-            if 'Actual' in col or 'Proyectado' in col:
-                display_df[col] = display_df[col].apply(format_number)
-        
-        st.dataframe(
-            display_df,
-            hide_index=True,
-            height=600
-        )
-        
-        # Mostrar totales
-        st.subheader("📊 Totales")
-        total_df = pd.DataFrame([total_row])
-        for col in total_df.columns:
-            if 'Actual' in col or 'Proyectado' in col:
-                total_df[col] = total_df[col].apply(format_number)
-        
-        st.dataframe(total_df, hide_index=True)
+        if mun_df is not None and not mun_df.empty:
+            # Formatear el dataframe para mostrar
+            display_mun_df = mun_df.copy()
+            
+            # Formatear columna de Actas %
+            display_mun_df['Actas %'] = display_mun_df['Actas %'].apply(lambda x: f"{x:.1f}%" if isinstance(x, (int, float)) else x)
+            
+            # Formatear columnas de votos
+            for col in display_mun_df.columns:
+                if 'Actual' in col or 'Proyectado' in col:
+                    display_mun_df[col] = display_mun_df[col].apply(format_number)
+            
+            st.dataframe(
+                display_mun_df,
+                hide_index=True,
+                height=600
+            )
+            
+            # Mostrar totales
+            st.subheader("📊 Totales (Municipios)")
+            total_mun_df = pd.DataFrame([mun_total])
+            for col in total_mun_df.columns:
+                if 'Actual' in col or 'Proyectado' in col:
+                    total_mun_df[col] = total_mun_df[col].apply(format_number)
+            
+            st.dataframe(total_mun_df, hide_index=True)
     
     st.divider()
     

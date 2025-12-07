@@ -281,14 +281,13 @@ def save_cache(data: dict) -> None:
         f.write(datetime.now().isoformat())
 
 
-def save_historical_data(department_data: Dict, projection_df: pd.DataFrame) -> None:
+def save_department_history(department_data: Dict, projection_df: pd.DataFrame) -> None:
     """
-    Guarda datos históricos en un CSV para análisis posterior.
-    Usa el DataFrame de proyección ya calculado.
+    Guarda datos históricos de proyección por departamento en un CSV.
     """
     import csv
     
-    HISTORICAL_FILE = "historical_data.csv"
+    HISTORICAL_FILE = os.path.join("historical_data", "projection_data_per_department.csv")
     timestamp = datetime.now().isoformat()
     
     # Calcular porcentaje promedio de actas
@@ -331,7 +330,62 @@ def save_historical_data(department_data: Dict, projection_df: pd.DataFrame) -> 
         
         writer.writerow(row)
     
-    print(f"  📊 Datos históricos guardados en {HISTORICAL_FILE}")
+    print(f"  📊 Datos históricos (Dept) guardados en {HISTORICAL_FILE}")
+
+
+def save_municipality_history(department_data: Dict, projection_df: pd.DataFrame) -> None:
+    """
+    Guarda datos históricos de proyección por municipio en un CSV.
+    """
+    import csv
+    
+    HISTORICAL_FILE = os.path.join("historical_data", "projection_data_per_municipality.csv")
+    timestamp = datetime.now().isoformat()
+    
+    # Calcular porcentaje promedio de actas (usando todos los municipios)
+    actas_percentages = []
+    for dept_name, dept_data in department_data.items():
+        if dept_name in ('raw_data', 'Nacional'):
+            continue
+        if 'municipios' in dept_data:
+            for mun_data in dept_data['municipios'].values():
+                actas_percentages.append(mun_data.get('actas_percentage', 0))
+                
+    avg_actas = sum(actas_percentages) / len(actas_percentages) if actas_percentages else 0
+    
+    # Verificar si el archivo existe para escribir encabezados
+    file_exists = os.path.exists(HISTORICAL_FILE)
+    
+    # Usar los datos ya calculados del DataFrame (top 3)
+    top_candidates = projection_df.head(3).to_dict('records')
+    
+    with open(HISTORICAL_FILE, 'a', newline='', encoding='utf-8') as f:
+        writer = csv.writer(f)
+        
+        # Escribir encabezados si es archivo nuevo
+        if not file_exists:
+            headers = ['timestamp', 'actas_correctas_pct']
+            for i in range(1, 4):
+                headers.extend([f'candidato_{i}', f'votos_actuales_{i}', f'votos_proyectados_{i}', f'porcentaje_{i}'])
+            writer.writerow(headers)
+        
+        # Construir fila de datos usando projection_df
+        row = [timestamp, f"{avg_actas:.2f}"]
+        for candidate in top_candidates:
+            row.extend([
+                candidate.get('Candidate', ''),
+                candidate.get('Current Votes', 0),
+                candidate.get('Projected Votes', 0),
+                f"{candidate.get('Percentage', 0):.2f}"
+            ])
+        
+        # Rellenar si hay menos de 3 candidatos
+        while len(row) < 14:
+            row.extend(['', 0, 0, '0.00'])
+        
+        writer.writerow(row)
+    
+    print(f"  📊 Datos históricos (Mun) guardados en {HISTORICAL_FILE}")
 
 
 def load_cache() -> Optional[dict]:
@@ -1842,6 +1896,9 @@ def main():
             print("\n")
             display_results(proj_mun, title="PROJECTION BASED ON MUNICIPIOS")
             
+            save_department_history(department_data, proj_dept)
+            save_municipality_history(department_data, proj_mun)
+            
             # Save the MUNICIPIOS one as the main one for history if available, or maybe save both?
             # For now, let's save the MUNICIPIOS one as it's more granular
             projection_df = proj_mun
@@ -1849,6 +1906,11 @@ def main():
         else:
             projection_df = calculate_national_projection(department_data, mode=scrape_mode)
             display_results(projection_df, title=f"PROJECTION BASED ON {scrape_mode}")
+            
+            if scrape_mode == "DEPARTAMENTOS":
+                save_department_history(department_data, projection_df)
+            elif scrape_mode == "MUNICIPIOS":
+                save_municipality_history(department_data, projection_df)
 
         if not projection_df.empty:
             cache_data = {
@@ -1857,7 +1919,7 @@ def main():
                 'mode': scrape_mode
             }
             save_cache(cache_data)
-            save_historical_data(department_data, projection_df)
+            # save_historical_data removed here
             last_results = cache_data
     else:
         # Show cached data if no new data
@@ -1899,10 +1961,19 @@ def main():
                     print("\n")
                     display_results(proj_mun, title="PROJECTION BASED ON MUNICIPIOS")
                     
+                    # Save both
+                    save_department_history(department_data, proj_dept)
+                    save_municipality_history(department_data, proj_mun)
+                    
                     projection_df = proj_mun
                 else:
                     projection_df = calculate_national_projection(department_data, mode=scrape_mode)
                     display_results(projection_df, title=f"PROJECTION BASED ON {scrape_mode}")
+                    
+                    if scrape_mode == "DEPARTAMENTOS":
+                        save_department_history(department_data, projection_df)
+                    elif scrape_mode == "MUNICIPIOS":
+                        save_municipality_history(department_data, projection_df)
                 
                 if not projection_df.empty:
                     cache_data = {
@@ -1911,7 +1982,7 @@ def main():
                         'mode': scrape_mode
                     }
                     save_cache(cache_data)
-                    save_historical_data(department_data, projection_df)
+                    # save_historical_data removed here as it is handled above
                     last_results = cache_data
                 else:
                     # Use cached data if available

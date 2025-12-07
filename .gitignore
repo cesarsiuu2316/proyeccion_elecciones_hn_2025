@@ -19,6 +19,7 @@ last_results.json
 .scraper_running
 
 # Historical data and generated files
+historical_data/
 historical_data.csv
 historical_data_1.csv
 resumen_electoral_*.csv

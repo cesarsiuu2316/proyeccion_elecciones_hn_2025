@@ -9,7 +9,6 @@ Uso:
     python analisis.py              # Genera todos los gráficos
     python analisis.py --stats      # Muestra estadísticas sin gráficos
     python analisis.py --export     # Exporta resumen a CSV
-    python analisis.py --reformat   # Reformatea decimales en CSV histórico
 """
 
 import pandas as pd
@@ -28,17 +27,19 @@ except ImportError:
     print("⚠️  matplotlib no está instalado. Para generar gráficos ejecuta:")
     print("   pip install matplotlib")
 
-HISTORICAL_FILE = "historical_data.csv"
+HISTORICAL_DIR = "historical_data"
+DEPT_FILE = os.path.join(HISTORICAL_DIR, "projection_data_per_department.csv")
+MUN_FILE = os.path.join(HISTORICAL_DIR, "projection_data_per_municipality.csv")
 
 
-def load_historical_data() -> Optional[pd.DataFrame]:
-    """Carga los datos históricos desde el CSV."""
-    if not os.path.exists(HISTORICAL_FILE):
-        print(f"❌ No se encontró el archivo {HISTORICAL_FILE}")
+def load_historical_data(file_path: str) -> Optional[pd.DataFrame]:
+    """Carga los datos históricos desde el CSV especificado."""
+    if not os.path.exists(file_path):
+        print(f"❌ No se encontró el archivo {file_path}")
         print("   Ejecuta main.py para recopilar datos primero.")
         return None
     
-    df = pd.read_csv(HISTORICAL_FILE)
+    df = pd.read_csv(file_path)
     df['timestamp'] = pd.to_datetime(df['timestamp'])
     return df
 
@@ -198,216 +199,6 @@ def plot_combined_dashboard(df: pd.DataFrame) -> None:
     if not MATPLOTLIB_AVAILABLE:
         print("❌ matplotlib no disponible para generar gráficos")
         return
-
-    fig = plt.figure(figsize=(14, 14))
-    gs = fig.add_gridspec(3, 2, height_ratios=[1.1, 1, 1])
-
-    # Ejes
-    ax_zoom = fig.add_subplot(gs[0, 0])   # Zoom votos actuales
-    ax_diff = fig.add_subplot(gs[0, 1])   # Diferencia
-    ax1 = fig.add_subplot(gs[1, 0])       # Votos proyectados
-    ax2 = fig.add_subplot(gs[1, 1])       # Porcentajes apilados
-    ax3 = fig.add_subplot(gs[2, 0])       # Progreso actas
-    ax4 = fig.add_subplot(gs[2, 1])       # Votos actuales 3 candidatos
-
-    colors = ['#003893', '#DC143C', '#228B22']
-    time_fmt = mdates.DateFormatter('%Y-%m-%d %H:%M')
-
-    # -----------------------------------------------------------
-    # 1) Votos actuales (Zoom) - Asfura / Nasralla
-    # -----------------------------------------------------------
-    for i in (1, 2):
-        col_cand = f'candidato_{i}'
-        col_votos = f'votos_actuales_{i}'
-        if col_cand in df.columns and col_votos in df.columns:
-            candidato = df[col_cand].iloc[-1]
-            serie = df[col_votos]
-            ax_zoom.plot(
-                df['timestamp'],
-                serie,
-                label=candidato,
-                linewidth=2,
-                color=colors[i - 1],
-            )
-
-    vmin_act = min(df['votos_actuales_1'].min(),
-                   df['votos_actuales_2'].min())
-    vmax_act = max(df['votos_actuales_1'].max(),
-                   df['votos_actuales_2'].max())
-    margin_act = max(100, int((vmax_act - vmin_act) * 0.3))
-    ax_zoom.set_ylim(vmin_act - margin_act, vmax_act + margin_act)
-
-    ax_zoom.set_title('Votos Actuales (Zoom) - Asfura / Nasralla',
-                      fontweight='bold')
-    ax_zoom.legend(loc='best', fontsize=8)
-    ax_zoom.grid(True, alpha=0.3)
-    ax_zoom.yaxis.set_major_formatter(
-        plt.FuncFormatter(lambda x, p: format(int(x), ','))
-    )
-
-    # -----------------------------------------------------------
-    # 2) Diferencia de votos (Asfura - Nasralla)
-    # -----------------------------------------------------------
-    serie_diff = df['votos_actuales_1'] - df['votos_actuales_2']
-
-    ax_diff.plot(df['timestamp'], serie_diff,
-                 linewidth=2, color='black')
-    ax_diff.axhline(0, linestyle='--', linewidth=1, color='gray')
-
-    vmin_d = serie_diff.min()
-    vmax_d = serie_diff.max()
-    margin_d = max(50, int((vmax_d - vmin_d) * 0.3))
-    ax_diff.set_ylim(vmin_d - margin_d, vmax_d + margin_d)
-
-    ax_diff.set_title('Diferencia de Votos - Asfura − Nasralla',
-                      fontweight='bold')
-    ax_diff.grid(True, alpha=0.3)
-    ax_diff.yaxis.set_major_formatter(
-        plt.FuncFormatter(lambda x, p: format(int(x), ','))
-    )
-    ax_diff.set_ylabel('Diferencia de votos')
-
-    # -----------------------------------------------------------
-    # 3) Votos proyectados (3 candidatos)
-    # -----------------------------------------------------------
-    for i in range(1, 4):
-        col_cand = f'candidato_{i}'
-        col_votos = f'votos_proyectados_{i}'
-        if col_cand in df.columns and col_votos in df.columns:
-            candidato = df[col_cand].iloc[-1]
-            ax1.plot(
-                df['timestamp'],
-                df[col_votos],
-                label=candidato,
-                linewidth=2,
-                color=colors[i - 1],
-            )
-    ax1.set_title('Votos Proyectados (3 Candidatos)', fontweight='bold')
-    ax1.legend(loc='best', fontsize=8)
-    ax1.grid(True, alpha=0.3)
-    ax1.yaxis.set_major_formatter(
-        plt.FuncFormatter(lambda x, p: format(int(x), ','))
-    )
-
-    # -----------------------------------------------------------
-    # 4) Porcentajes – área apilada ordenada
-    #   Base: 3er lugar, arriba: 1er lugar
-    # -----------------------------------------------------------
-    # Orden por porcentaje final (ascendente)
-    order = sorted(
-        range(1, 4),
-        key=lambda i: df[f'porcentaje_{i}'].iloc[-1]
-    )  # [tercero, segundo, primero]
-
-    stack_data = [df[f'porcentaje_{i}'] for i in order]
-    colors_ordered = [colors[i - 1] for i in order]
-    labels_ordered = [df[f'candidato_{i}'].iloc[-1] for i in order]
-
-    ax2.stackplot(df['timestamp'], stack_data,
-                  colors=colors_ordered, labels=labels_ordered,
-                  alpha=0.7)
-
-    ax2.set_title('Porcentajes (Área Apilada)', fontweight='bold')
-    ax2.grid(True, alpha=0.3)
-    ax2.set_ylim(0, 100)
-
-    # Leyenda con primer lugar arriba
-    handles, labels = ax2.get_legend_handles_labels()
-    ax2.legend(handles[::-1], labels[::-1], loc='upper left', fontsize=8)
-
-    # Etiquetas de porcentaje a la derecha
-    pct_finals = [df[f'porcentaje_{i}'].iloc[-1] for i in order]
-    running = 0.0
-    for pct, label in zip(pct_finals, labels_ordered):
-        bottom = running
-        top = running + pct
-        mid = (bottom + top) / 2.0
-        running = top
-        ax2.text(
-            1.01,               # un poco fuera del eje, a la derecha
-            mid / 100.0,        # convertir 0–100 a 0–1
-            f"{pct:.2f}%",
-            transform=ax2.transAxes,
-            va='center',
-            ha='left',
-            fontsize=8,
-            fontweight='bold',
-        )
-
-    # -----------------------------------------------------------
-    # 5) Progreso de actas escrutadas
-    # -----------------------------------------------------------
-    ax3.fill_between(
-        df['timestamp'],
-        df['avg_actas_pct'],
-        alpha=0.3,
-        color='green',
-    )
-    ax3.plot(df['timestamp'], df['avg_actas_pct'],
-             linewidth=2, color='green')
-    ax3.set_title('Progreso de Actas Escrutadas', fontweight='bold')
-    ax3.grid(True, alpha=0.3)
-    ax3.set_ylim(0, 100)
-
-    # Porcentaje al centro
-    actas_now = df['avg_actas_pct'].iloc[-1]
-    ax3.text(
-        0.5, 0.5,
-        f"{actas_now:.2f}%",
-        transform=ax3.transAxes,
-        ha='center',
-        va='center',
-        fontsize=16,
-        fontweight='bold',
-        alpha=0.7,
-    )
-
-    # -----------------------------------------------------------
-    # 6) Votos actuales (3 candidatos)
-    # -----------------------------------------------------------
-    for i in range(1, 4):
-        col_cand = f'candidato_{i}'
-        col_votos = f'votos_actuales_{i}'
-        if col_cand in df.columns and col_votos in df.columns:
-            candidato = df[col_cand].iloc[-1]
-            ax4.plot(
-                df['timestamp'],
-                df[col_votos],
-                label=candidato,
-                linewidth=2,
-                color=colors[i - 1],
-            )
-    ax4.set_title('Votos Actuales (sin proyección)', fontweight='bold')
-    ax4.legend(loc='best', fontsize=8)
-    ax4.grid(True, alpha=0.3)
-    ax4.yaxis.set_major_formatter(
-        plt.FuncFormatter(lambda x, p: format(int(x), ','))
-    )
-
-    # -----------------------------------------------------------
-    # Formato común de eje X (fecha + hora, fuente pequeña)
-    # -----------------------------------------------------------
-    all_axes = [ax_zoom, ax_diff, ax1, ax2, ax3, ax4]
-    for ax in all_axes:
-        ax.xaxis.set_major_formatter(time_fmt)
-        ax.tick_params(axis='x', labelrotation=45, labelsize=7)
-        ax.set_xlabel('Tiempo')
-
-    plt.suptitle(
-        'Dashboard Electoral - Honduras 2025',
-        fontsize=16,
-        fontweight='bold',
-        y=0.98,
-    )
-    plt.tight_layout()
-    plt.savefig('dashboard_electoral.png', dpi=150, bbox_inches='tight')
-    print("✅ Dashboard guardado: dashboard_electoral.png")
-    plt.show()
-
-    """Genera un dashboard combinado con todos los gráficos."""
-    if not MATPLOTLIB_AVAILABLE:
-        print("❌ matplotlib no disponible para generar gráficos")
-        return
     
     fig, axes = plt.subplots(2, 2, figsize=(14, 10))
     
@@ -495,54 +286,28 @@ def export_summary(df: pd.DataFrame) -> None:
     print(f"✅ Resumen exportado: {summary_file}")
 
 
-def reformat_csv_decimals() -> None:
-    """Reformatea el CSV histórico para asegurar 2 decimales en porcentajes."""
-    if not os.path.exists(HISTORICAL_FILE):
-        print(f"❌ No se encontró el archivo {HISTORICAL_FILE}")
-        return
-
-    print(f"🔄 Reformateando {HISTORICAL_FILE}...")
-    try:
-        df = pd.read_csv(HISTORICAL_FILE)
-        
-        # Columnas a formatear
-        cols_to_format = ['avg_actas_pct']
-        for col in df.columns:
-            if col.startswith('porcentaje_'):
-                cols_to_format.append(col)
-        
-        # Aplicar formato
-        for col in cols_to_format:
-            if col in df.columns:
-                # Convertir a float primero por si acaso, luego formatear
-                df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
-                df[col] = df[col].apply(lambda x: f"{x:.2f}")
-        
-        # Guardar de nuevo
-        df.to_csv(HISTORICAL_FILE, index=False, encoding='utf-8')
-        print("✅ Archivo reformateado exitosamente con 2 decimales.")
-        
-        # Mostrar primeras filas como verificación
-        print("\nVista previa de las primeras filas:")
-        print(df[cols_to_format].head())
-        
-    except Exception as e:
-        print(f"❌ Error al reformatear: {e}")
-
-
 def main():
     """Función principal del análisis."""
     print("\n" + "="*60)
     print("🗳️  ANÁLISIS ELECTORAL - HONDURAS 2025")
     print("="*60)
     
-    # Verificar argumentos especiales antes de cargar datos
-    if len(sys.argv) > 1 and '--reformat' in sys.argv:
-        reformat_csv_decimals()
-        return
-
+    # Seleccionar archivo
+    print("\nSelecciona los datos a analizar:")
+    print("1. Proyección por Departamentos")
+    print("2. Proyección por Municipios")
+    
+    choice = input("Opción (1/2) [Default: 1]: ").strip()
+    
+    if choice == "2":
+        file_path = MUN_FILE
+        print(f"📂 Analizando datos de MUNICIPIOS: {file_path}")
+    else:
+        file_path = DEPT_FILE
+        print(f"📂 Analizando datos de DEPARTAMENTOS: {file_path}")
+    
     # Cargar datos
-    df = load_historical_data()
+    df = load_historical_data(file_path)
     if df is None:
         return
     

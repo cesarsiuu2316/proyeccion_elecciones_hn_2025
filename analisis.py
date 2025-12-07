@@ -198,6 +198,216 @@ def plot_combined_dashboard(df: pd.DataFrame) -> None:
     if not MATPLOTLIB_AVAILABLE:
         print("❌ matplotlib no disponible para generar gráficos")
         return
+
+    fig = plt.figure(figsize=(14, 14))
+    gs = fig.add_gridspec(3, 2, height_ratios=[1.1, 1, 1])
+
+    # Ejes
+    ax_zoom = fig.add_subplot(gs[0, 0])   # Zoom votos actuales
+    ax_diff = fig.add_subplot(gs[0, 1])   # Diferencia
+    ax1 = fig.add_subplot(gs[1, 0])       # Votos proyectados
+    ax2 = fig.add_subplot(gs[1, 1])       # Porcentajes apilados
+    ax3 = fig.add_subplot(gs[2, 0])       # Progreso actas
+    ax4 = fig.add_subplot(gs[2, 1])       # Votos actuales 3 candidatos
+
+    colors = ['#003893', '#DC143C', '#228B22']
+    time_fmt = mdates.DateFormatter('%Y-%m-%d %H:%M')
+
+    # -----------------------------------------------------------
+    # 1) Votos actuales (Zoom) - Asfura / Nasralla
+    # -----------------------------------------------------------
+    for i in (1, 2):
+        col_cand = f'candidato_{i}'
+        col_votos = f'votos_actuales_{i}'
+        if col_cand in df.columns and col_votos in df.columns:
+            candidato = df[col_cand].iloc[-1]
+            serie = df[col_votos]
+            ax_zoom.plot(
+                df['timestamp'],
+                serie,
+                label=candidato,
+                linewidth=2,
+                color=colors[i - 1],
+            )
+
+    vmin_act = min(df['votos_actuales_1'].min(),
+                   df['votos_actuales_2'].min())
+    vmax_act = max(df['votos_actuales_1'].max(),
+                   df['votos_actuales_2'].max())
+    margin_act = max(100, int((vmax_act - vmin_act) * 0.3))
+    ax_zoom.set_ylim(vmin_act - margin_act, vmax_act + margin_act)
+
+    ax_zoom.set_title('Votos Actuales (Zoom) - Asfura / Nasralla',
+                      fontweight='bold')
+    ax_zoom.legend(loc='best', fontsize=8)
+    ax_zoom.grid(True, alpha=0.3)
+    ax_zoom.yaxis.set_major_formatter(
+        plt.FuncFormatter(lambda x, p: format(int(x), ','))
+    )
+
+    # -----------------------------------------------------------
+    # 2) Diferencia de votos (Asfura - Nasralla)
+    # -----------------------------------------------------------
+    serie_diff = df['votos_actuales_1'] - df['votos_actuales_2']
+
+    ax_diff.plot(df['timestamp'], serie_diff,
+                 linewidth=2, color='black')
+    ax_diff.axhline(0, linestyle='--', linewidth=1, color='gray')
+
+    vmin_d = serie_diff.min()
+    vmax_d = serie_diff.max()
+    margin_d = max(50, int((vmax_d - vmin_d) * 0.3))
+    ax_diff.set_ylim(vmin_d - margin_d, vmax_d + margin_d)
+
+    ax_diff.set_title('Diferencia de Votos - Asfura − Nasralla',
+                      fontweight='bold')
+    ax_diff.grid(True, alpha=0.3)
+    ax_diff.yaxis.set_major_formatter(
+        plt.FuncFormatter(lambda x, p: format(int(x), ','))
+    )
+    ax_diff.set_ylabel('Diferencia de votos')
+
+    # -----------------------------------------------------------
+    # 3) Votos proyectados (3 candidatos)
+    # -----------------------------------------------------------
+    for i in range(1, 4):
+        col_cand = f'candidato_{i}'
+        col_votos = f'votos_proyectados_{i}'
+        if col_cand in df.columns and col_votos in df.columns:
+            candidato = df[col_cand].iloc[-1]
+            ax1.plot(
+                df['timestamp'],
+                df[col_votos],
+                label=candidato,
+                linewidth=2,
+                color=colors[i - 1],
+            )
+    ax1.set_title('Votos Proyectados (3 Candidatos)', fontweight='bold')
+    ax1.legend(loc='best', fontsize=8)
+    ax1.grid(True, alpha=0.3)
+    ax1.yaxis.set_major_formatter(
+        plt.FuncFormatter(lambda x, p: format(int(x), ','))
+    )
+
+    # -----------------------------------------------------------
+    # 4) Porcentajes – área apilada ordenada
+    #   Base: 3er lugar, arriba: 1er lugar
+    # -----------------------------------------------------------
+    # Orden por porcentaje final (ascendente)
+    order = sorted(
+        range(1, 4),
+        key=lambda i: df[f'porcentaje_{i}'].iloc[-1]
+    )  # [tercero, segundo, primero]
+
+    stack_data = [df[f'porcentaje_{i}'] for i in order]
+    colors_ordered = [colors[i - 1] for i in order]
+    labels_ordered = [df[f'candidato_{i}'].iloc[-1] for i in order]
+
+    ax2.stackplot(df['timestamp'], stack_data,
+                  colors=colors_ordered, labels=labels_ordered,
+                  alpha=0.7)
+
+    ax2.set_title('Porcentajes (Área Apilada)', fontweight='bold')
+    ax2.grid(True, alpha=0.3)
+    ax2.set_ylim(0, 100)
+
+    # Leyenda con primer lugar arriba
+    handles, labels = ax2.get_legend_handles_labels()
+    ax2.legend(handles[::-1], labels[::-1], loc='upper left', fontsize=8)
+
+    # Etiquetas de porcentaje a la derecha
+    pct_finals = [df[f'porcentaje_{i}'].iloc[-1] for i in order]
+    running = 0.0
+    for pct, label in zip(pct_finals, labels_ordered):
+        bottom = running
+        top = running + pct
+        mid = (bottom + top) / 2.0
+        running = top
+        ax2.text(
+            1.01,               # un poco fuera del eje, a la derecha
+            mid / 100.0,        # convertir 0–100 a 0–1
+            f"{pct:.2f}%",
+            transform=ax2.transAxes,
+            va='center',
+            ha='left',
+            fontsize=8,
+            fontweight='bold',
+        )
+
+    # -----------------------------------------------------------
+    # 5) Progreso de actas escrutadas
+    # -----------------------------------------------------------
+    ax3.fill_between(
+        df['timestamp'],
+        df['avg_actas_pct'],
+        alpha=0.3,
+        color='green',
+    )
+    ax3.plot(df['timestamp'], df['avg_actas_pct'],
+             linewidth=2, color='green')
+    ax3.set_title('Progreso de Actas Escrutadas', fontweight='bold')
+    ax3.grid(True, alpha=0.3)
+    ax3.set_ylim(0, 100)
+
+    # Porcentaje al centro
+    actas_now = df['avg_actas_pct'].iloc[-1]
+    ax3.text(
+        0.5, 0.5,
+        f"{actas_now:.2f}%",
+        transform=ax3.transAxes,
+        ha='center',
+        va='center',
+        fontsize=16,
+        fontweight='bold',
+        alpha=0.7,
+    )
+
+    # -----------------------------------------------------------
+    # 6) Votos actuales (3 candidatos)
+    # -----------------------------------------------------------
+    for i in range(1, 4):
+        col_cand = f'candidato_{i}'
+        col_votos = f'votos_actuales_{i}'
+        if col_cand in df.columns and col_votos in df.columns:
+            candidato = df[col_cand].iloc[-1]
+            ax4.plot(
+                df['timestamp'],
+                df[col_votos],
+                label=candidato,
+                linewidth=2,
+                color=colors[i - 1],
+            )
+    ax4.set_title('Votos Actuales (sin proyección)', fontweight='bold')
+    ax4.legend(loc='best', fontsize=8)
+    ax4.grid(True, alpha=0.3)
+    ax4.yaxis.set_major_formatter(
+        plt.FuncFormatter(lambda x, p: format(int(x), ','))
+    )
+
+    # -----------------------------------------------------------
+    # Formato común de eje X (fecha + hora, fuente pequeña)
+    # -----------------------------------------------------------
+    all_axes = [ax_zoom, ax_diff, ax1, ax2, ax3, ax4]
+    for ax in all_axes:
+        ax.xaxis.set_major_formatter(time_fmt)
+        ax.tick_params(axis='x', labelrotation=45, labelsize=7)
+        ax.set_xlabel('Tiempo')
+
+    plt.suptitle(
+        'Dashboard Electoral - Honduras 2025',
+        fontsize=16,
+        fontweight='bold',
+        y=0.98,
+    )
+    plt.tight_layout()
+    plt.savefig('dashboard_electoral.png', dpi=150, bbox_inches='tight')
+    print("✅ Dashboard guardado: dashboard_electoral.png")
+    plt.show()
+
+    """Genera un dashboard combinado con todos los gráficos."""
+    if not MATPLOTLIB_AVAILABLE:
+        print("❌ matplotlib no disponible para generar gráficos")
+        return
     
     fig, axes = plt.subplots(2, 2, figsize=(14, 10))
     

@@ -2,6 +2,10 @@
 
 Obtiene resultados en tiempo real de [CNE Honduras](https://resultadosgenerales2025.cne.hn) y proyecta el conteo final de votos basado en las actas procesadas por departamento o municipio.
 
+![Proyección Streamlit](imgs_readme/proyeccion_streamlit.png)
+![Proyección Streamlit](imgs_readme/proyeccion_streamlit2.png)
+![Dashboard Electoral](imgs_readme/dashboard_electoral.png)
+
 ## Requisitos
 
 - Python 3.8+
@@ -56,7 +60,7 @@ proyeccion_elecciones_hn_2025/
 El sistema utiliza una proyección lineal basada en el porcentaje de **Actas Correctas** (no solo procesadas). Esto es crucial para la precisión, ya que las actas con inconsistencias no suman votos al conteo actual.
 
 $$
-\text{Votos Proyectados} = \sum \left( \frac{\text{Votos Actuales} \times 100}{\% \text{ Actas Correctas}} \right)
+\text{Votos Proyectados} = \sum \left( \frac{\text{Votos Actuales} \times 100}{\%\text{ Actas Correctas}} \right)
 $$
 
 **Cómo funciona:**

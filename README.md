@@ -60,7 +60,11 @@ proyeccion_elecciones_hn_2025/
 El sistema utiliza una proyección lineal basada en el porcentaje de **Actas Correctas** (no solo procesadas). Esto es crucial para la precisión, ya que las actas con inconsistencias no suman votos al conteo actual.
 
 $$
-\text{Votos Proyectados} = \sum \left( \frac{\text{Votos Actuales} \times 100}{\%\text{ Actas Correctas}} \right)
+\text{Votos Proyectados} =
+\sum \left(
+\frac{\text{Votos Actuales} \times 100}
+{\text{Actas Correctas}}
+\right)
 $$
 
 **Cómo funciona:**
@@ -81,3 +85,4 @@ Las proyecciones generadas por este sistema son estimaciones matemáticas basada
 ## Análisis de Datos
 
 Puedes ejecutar `python analisis.py` para ver estadísticas y gráficos de la evolución de la proyección. El script te permitirá elegir entre analizar los datos históricos por departamento o por municipio.
+
